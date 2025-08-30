@@ -1,3 +1,5 @@
+import os
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -107,3 +109,60 @@ plt.title("Baby Weight vs WHO Growth Standards")
 plt.legend()
 plt.grid(True)
 st.pyplot(plt)
+
+
+import requests
+
+HF_API_TOKEN = st.secrets.get("hf_token", os.getenv("HF_API_TOKEN"))
+
+
+def ask_openrouter(prompt):
+    api_url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {st.secrets['openrouter_key']}",
+        "HTTP-Referer": "https://baby-percentile-checker.streamlit.app",  # required by OpenRouter
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "meta-llama/llama-3-8b-instruct",
+        "messages": [
+            {"role": "system",
+             "content": "You are a friendly pediatric AI assistant that helps parents understand baby growth and feeding."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+
+    response = requests.post(api_url, headers=headers, json=payload)
+
+    if response.status_code != 200:
+        raise Exception(f"OpenRouter API error: {response.text}")
+
+    return response.json()["choices"][0]["message"]["content"]
+
+st.subheader("🤖 Ask the AI Assistant")
+
+user_question = st.text_area("Ask something like: *Is this weight normal for her age?*", key="ai_input")
+
+if st.button("Get Advice") and user_question:
+    with st.spinner("Thinking..."):
+        full_prompt = f"""
+        You are a pediatric AI assistant helping parents interpret baby weight and growth.
+
+        Baby Info:
+        - Age: {age_months:.2f} months
+        - Weight: {weight} kg
+        - Sex: {sex}
+        - Feeding Type: {feeding_type}
+        - Weight Percentile: {percentile:.1f}
+
+        Now respond to this user question in a clear, friendly tone:
+        {user_question}
+        """
+
+        try:
+            reply = ask_openrouter(full_prompt)
+            st.success("AI Assistant says:")
+            st.markdown(reply)
+        except Exception as e:
+            st.error(str(e))
