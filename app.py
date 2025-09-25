@@ -5,19 +5,51 @@ import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
 import altair as alt
-import requests
 from scipy.stats import norm
 from datetime import date
+
+
+API_URL = "https://baby-api-ffut.onrender.com/"  # later we'll replace this with a deployed URL
+
+
+import requests
+@st.cache_data
+def load_history():
+    try:
+        res = requests.get(API_URL+"/weights")
+        if res.status_code == 200:
+            data = res.json()
+            df = pd.DataFrame(data)
+            df["date"] = pd.to_datetime(df["date"]).dt.date
+            return df.sort_values("date")
+        else:
+            st.error("Failed to fetch history from backend.")
+            return pd.DataFrame(columns=["date", "weight"])
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return pd.DataFrame(columns=["date", "weight"])
+
+def save_new_weight(date_str, weight_val):
+    try:
+        response = requests.post(f"{API_URL}/weights", json={
+            "date": date_str,
+            "weight": weight_val
+        })
+        return response.status_code == 200
+    except Exception as e:
+        st.error(f"❌ Failed to save weight to API: {e}")
+        return False
+
 
 # ===== Streamlit Page Config =====
 st.set_page_config(page_title="Baby Tracker AI", page_icon="🍼", layout="centered")
 st.title("👶 Baby Weight Tracker")
 
 # ===== Helper Functions =====
-@st.cache_data
-def load_history():
-    df = pd.read_csv("baby_weights.csv", parse_dates=["date"])
-    return df.sort_values("date")
+# @st.cache_data
+# def load_history():
+    # df = pd.read_csv("baby_weights.csv", parse_dates=["date"])
+    # return df.sort_values("date")
 
 def calculate_age_in_months(dob, today=None):
     today = today or date.today()
@@ -61,6 +93,21 @@ def ask_openrouter(prompt):
 sex = st.radio("Select baby's sex:", ["Girl", "Boy"])
 dob = st.date_input("Baby's Date of Birth", value=datetime.date(2025, 5, 8))
 weight_input = st.text_input("Current weight (kg)", value="")
+try:
+    weight_val = float(weight_input)
+    today_str = str(datetime.date.today())
+
+    # Send POST request
+    requests.post(API_URL+"/add_weight", json={
+        "date": today_str,
+        "weight": weight_val
+    })
+
+    # Reload history after adding
+    history = load_history()
+
+except ValueError:
+    st.warning("Please enter a valid weight.")
 percentile_input = st.text_input("Target percentile (1–99)", value="50")
 feeding_type = st.radio("Feeding Type", ["Breastfeeding only", "Breastfeeding + Formula", "Formula only", "Weaning / solids"])
 
@@ -70,18 +117,18 @@ history = load_history()
 history["date"] = pd.to_datetime(history["date"])
 try:
     weight_val = float(weight_input)
-    if not ((history["date"].dt.date == current_date) & (np.isclose(history["weight_kg"], weight_val))).any():
-        new_row = pd.DataFrame([{"date": pd.to_datetime(current_date), "weight_kg": weight_val}])
-        history = pd.concat([history, new_row], ignore_index=True)
-        history["date"] = pd.to_datetime(history["date"])
-        history = history.sort_values("date")
+    if not ((history["date"].dt.date == current_date) & (np.isclose(history["weight"], weight_val))).any():
+        if save_new_weight(str(current_date), weight_val):
+            st.success("✅ Saved weight to API")
+            st.cache_data.clear()  # force reload
+            history = load_history()
 except ValueError:
     pass
 
 # ===== Display Weight History Chart =====
 st.subheader("📊 Baby Weight History")
 history["date"] = pd.to_datetime(history["date"]).dt.date
-chart = alt.Chart(history).mark_line().encode(x='date', y='weight_kg').properties(width=500, height=200)
+chart = alt.Chart(history).mark_line().encode(x='date', y='weight').properties(width=500, height=200)
 st.altair_chart(chart, use_container_width=True)
 with st.expander("📋 Show Full Weight Table"):
     st.dataframe(history, hide_index=True)
